@@ -1,30 +1,37 @@
 import numpy as np
-import librosa
-from keras.models import load_model
-from sklearn.preprocessing import LabelEncoder
-import joblib
+import tensorflow as tf
+from sklearn.preprocessing import MultiLabelBinarizer
 
-# Load the trained model
-model = load_model('pet_sound_detection_model.h5')
+from extract_features import extract_features
 
-# Load the trained label encoder
-label_encoder = joblib.load('label_encoder.pkl')  # Ensure this file exists and contains your fitted label encoder
+# Load model
+model = tf.keras.models.load_model('pet_sound_detection_model.keras')
+print(model.summary())
 
-def extract_features(file_name):
-    """Extract MFCC features from the audio file."""
-    audio, sample_rate = librosa.load(file_name, sr=None)
-    mfccs = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=13)
-    return np.mean(mfccs.T, axis=0)
+# Load labels and ensure all unique classes are used in the encoder
+labels = np.load('labels.npy', allow_pickle=True)
+unique_labels = set(label for sublist in labels for label in sublist.split(', '))
+mlb = MultiLabelBinarizer(classes=list(unique_labels))
+mlb.fit([label.split(', ') for label in labels])  # Fit on all labels
 
+
+# Predict function
 def predict_sound(file_name):
-    """Predict the sound from an audio file."""
-    features = extract_features(file_name)
-    features = features.reshape(1, -1)  # Reshape for prediction
-    prediction = model.predict(features)
-    predicted_index = np.argmax(prediction)  # Get index of the highest predicted value
-    return label_encoder.inverse_transform([predicted_index])  # Decode the predicted index to label
+    # Extract features as done in extract_features.py
+    features = extract_features(file_name).reshape(1, -1)  # Reshape for single sample
 
-# Test the function
-if __name__ == "__main__":
-    test_file = 'audio_files/cat.wav'  # Update with the path to your test audio file
-    print(f"Prediction for {test_file}: {predict_sound(test_file)}")
+    # Predict and threshold labels
+    prediction = model.predict(features)
+
+    # Check prediction shape matches number of classes
+    if prediction.shape[1] != len(mlb.classes_):
+        raise ValueError(
+            f"Prediction output shape {prediction.shape} does not match number of classes: {len(mlb.classes_)}")
+
+    # Convert prediction to binary indicators and inverse transform
+    predicted_labels = mlb.inverse_transform(prediction > 0.5)  # Threshold at 0.5
+    return predicted_labels
+
+
+# Example usage
+print(predict_sound("audio_files/example_audio.wav"))
